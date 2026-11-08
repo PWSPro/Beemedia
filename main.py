@@ -1,20 +1,38 @@
 import os
 import time
 import math
-import psutil
 import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.errors import FloodWait, UserIsBlocked
 import yt_dlp
 
-# API Credentials (အသေထည့်ထားသည်)
+# === BOT CREDENTIALS ===
 API_ID = 25131184
 API_HASH = "33a9391cdc79df295c4e326440e58a8c"
 BOT_TOKEN = "8342749669:AAHxEkD6KdWSH_QwERwp6_-ByER5quhLCh0"
 
-app = Client("ultimate_downloader", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+# === ADMIN CONFIGURATION ===
+ADMIN_ID = 7567720140
 
-# --- Helper Functions ---
+app = Client("public_social_downloader", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+
+# === USER DATABASE (TXT FILE FOR RAILWAY) ===
+USERS_FILE = "users_db.txt"
+
+def load_users():
+    if not os.path.exists(USERS_FILE):
+        return set()
+    with open(USERS_FILE, "r") as f:
+        return set(int(line.strip()) for line in f if line.strip().isdigit())
+
+def save_user(user_id):
+    users = load_users()
+    if user_id not in users:
+        with open(USERS_FILE, "a") as f:
+            f.write(f"{user_id}\n")
+
+# === HELPER FUNCTIONS ===
 def format_bytes(size):
     power = 2**10
     n = 0
@@ -25,13 +43,11 @@ def format_bytes(size):
     return f"{str(round(size, 2))} {dic_powerN[n]}B"
 
 def format_time(seconds):
-    minutes, seconds = divmod(int(seconds), 60)
-    hours, minutes = divmod(minutes, 60)
-    if hours > 0: return f"{hours}h {minutes}m {seconds}s"
-    elif minutes > 0: return f"{minutes}m {seconds}s"
-    else: return f"{seconds}s"
+    m, s = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    return f"{h}h {m}m {s}s" if h > 0 else f"{m}m {s}s"
 
-# --- Live Progress Bar ---
+# === PROGRESS BAR ===
 async def progress_bar(current, total, message, start_time):
     now = time.time()
     diff = now - start_time
@@ -39,133 +55,146 @@ async def progress_bar(current, total, message, start_time):
         return
     percentage = current * 100 / total
     speed = current / diff
-    time_to_completion = round((total - current) / speed) if speed > 0 else 0
+    eta = round((total - current) / speed) if speed > 0 else 0
     progress_str = "[{0}{1}]".format(
-        ''.join(["█" for i in range(math.floor(percentage / 5))]),
-        ''.join(["░" for i in range(20 - math.floor(percentage / 5))])
+        ''.join(["⬢" for i in range(math.floor(percentage / 10))]),
+        ''.join(["⬡" for i in range(10 - math.floor(percentage / 10))])
     )
     text = (f"🚀 **Uploading to Telegram...**\n\n"
             f"{progress_str} **{round(percentage, 2)}%**\n"
             f"⚡ **Speed:** {format_bytes(speed)}/s\n"
-            f"⏳ **ETA:** {format_time(time_to_completion)}\n"
+            f"⏳ **ETA:** {format_time(eta)}\n"
             f"💾 **Size:** {format_bytes(current)} / {format_bytes(total)}")
     try:
         await message.edit_text(text)
     except:
         pass
 
-# --- Start & Commands ---
-@app.on_message(filters.command("start"))
-async def start_command(client, message):
-    buttons = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("🛠 Developer", url="https://t.me/INTELLIGENCE_BEE1")]]
-    )
+# === START COMMAND ===
+@app.on_message(filters.command("start") & filters.private)
+async def start_cmd(client, message):
+    save_user(message.from_user.id)
+    buttons = InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Add to Group", url=f"https://t.me/{client.me.username}?startgroup=true")],
+        [InlineKeyboardButton("👨‍💻 Developer", url="https://t.me/INTELLIGENCE_BEE1"),
+         InlineKeyboardButton("📢 Updates", url="https://t.me/INTELLIGENCE_BEE1")]
+    ])
     await message.reply_text(
-        "👋 **Ultimate Social Media Downloader မှ ကြိုဆိုပါတယ်။**\n\n"
-        "🌐 **Supported Sites:** Facebook, TikTok, Instagram, Twitter, YouTube အပါအဝင် Website ပေါင်း ၁၀၀၀ ကျော်။\n\n"
-        "🎬 Video ဒေါင်းရန် - Link ကို တိုက်ရိုက်ပို့ပါ။\n"
-        "🎵 Audio (MP3) ဒေါင်းရန် - `/audio <link>` လို့ပို့ပါ။\n"
-        "🖥 Server စစ်ရန် - `/stats` ကိုနှိပ်ပါ။",
+        f"👋 **Hello {message.from_user.first_name}, Welcome to Ultimate Downloader!**\n\n"
+        "🌐 I can download videos and audio from **TikTok, Facebook, Instagram, Twitter/X, YouTube, Pinterest** and 1000+ other sites.\n\n"
+        "📥 **How to use:**\n"
+        "Just send me the link of the video you want to download!",
         reply_markup=buttons
     )
 
-@app.on_message(filters.command("stats"))
-async def stats_command(client, message):
-    cpu = psutil.cpu_percent()
-    ram = psutil.virtual_memory().percent
-    disk = psutil.disk_usage('/').percent
-    await message.reply_text(f"🖥 **Railway Server Status:**\n\n⚙️ CPU: `{cpu}%`\n🧠 RAM: `{ram}%`\n💾 Disk: `{disk}%`")
+# === ADMIN COMMANDS ===
+@app.on_message(filters.command("stats") & filters.user(ADMIN_ID))
+async def stats_cmd(client, message):
+    users = load_users()
+    await message.reply_text(f"📊 **Bot Statistics:**\n\n👥 Total Users: `{len(users)}`")
 
-# --- Core Downloader ---
-@app.on_message(filters.text & ~filters.command(["start", "stats"]))
+@app.on_message(filters.command("broadcast") & filters.user(ADMIN_ID))
+async def broadcast_cmd(client, message):
+    if not message.reply_to_message:
+        return await message.reply_text("❌ Please reply to a message to broadcast it.")
+    
+    users = load_users()
+    await message.reply_text(f"📢 Broadcasting to {len(users)} users...")
+    
+    success, failed = 0, 0
+    for user_id in users:
+        try:
+            await message.reply_to_message.copy(user_id)
+            success += 1
+            await asyncio.sleep(0.1) # Anti-Flood
+        except UserIsBlocked:
+            failed += 1
+        except FloodWait as e:
+            await asyncio.sleep(e.value)
+            await message.reply_to_message.copy(user_id)
+            success += 1
+        except:
+            failed += 1
+
+    await message.reply_text(f"✅ **Broadcast Completed!**\n\n🎯 Success: `{success}`\n🚫 Failed/Blocked: `{failed}`")
+
+# === CORE DOWNLOADER ===
+@app.on_message(filters.text & filters.private & ~filters.command(["start", "stats", "broadcast"]))
 async def download_media(client, message):
-    text = message.text.strip()
-    is_audio = text.startswith("/audio")
-    url = text.replace("/audio", "").strip() if is_audio else text
-
+    save_user(message.from_user.id)
+    url = message.text.strip()
+    
     if not url.startswith("http"):
-        return await message.reply_text("❌ ကျေးဇူးပြု၍ မှန်ကန်သော Website Link ကိုသာ ပေးပို့ပါ။")
+        return await message.reply_text("❌ Please send a valid URL (http/https).")
 
-    status_msg = await message.reply_text("🔍 **Link ကို စစ်ဆေးနေပါသည်...**")
+    status_msg = await message.reply_text("🔍 **Analyzing Link...**")
 
-    # yt-dlp Ultimate Configurations
+    # yt-dlp Options for Max Quality (No Watermark for TikTok)
     ydl_opts = {
-        'format': 'bestaudio/best' if is_audio else 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'outtmpl': 'downloads/%(id)s.%(ext)s',
-        'geo_bypass': True,  # နိုင်ငံခြားက ပိတ်ထားတာတွေကို ကျော်ဒေါင်းမယ်
+        'geo_bypass': True,
         'nocheckcertificate': True,
-        'writethumbnail': not is_audio, # Video ဆိုရင် Cover ပုံပါ ဆွဲမယ်
+        'merge_output_format': 'mp4',
         'quiet': True,
         'no_warnings': True
     }
 
-    if is_audio:
-        ydl_opts['postprocessors'] = [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '320'}]
-    else:
-        ydl_opts['merge_output_format'] = 'mp4'
-
     try:
-        await status_msg.edit_text("⬇️ **Server ထဲသို့ အကြည်ဆုံး Quality ဖြင့် Download ဆွဲနေပါသည်...**")
+        await status_msg.edit_text("⬇️ **Downloading Media to Server...**")
         
-        # Async run for blocking yt-dlp code
-        def download_process():
+        # Run yt-dlp in a background thread to prevent blocking other users
+        def extract_and_download():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 return ydl.extract_info(url, download=True)
-                
-        info = await asyncio.to_thread(download_process)
+
+        info = await asyncio.to_thread(extract_and_download)
         
-        # Paths Setup
-        if is_audio:
-            file_path = f"downloads/{info['id']}.mp3"
-        else:
-            file_path = f"downloads/{info['id']}.mp4"
-            
-        thumb_path = f"downloads/{info['id']}.jpg" if not is_audio and os.path.exists(f"downloads/{info['id']}.jpg") else None
+        file_path = f"downloads/{info['id']}.mp4"
+        title = info.get('title', 'Social Media Video')
+        uploader = info.get('uploader', info.get('extractor_key', 'Unknown'))
+        
+        caption = (f"🎬 **{title[:50]}...**\n"
+                   f"👤 **Source:** {uploader}\n\n"
+                   f"🤖 @{client.me.username}")
 
-        title = info.get('title', 'Downloaded Media')
-        uploader = info.get('uploader', info.get('extractor_key', 'Unknown Site'))
-        duration = info.get('duration', 0)
+        # Inline Button for sharing
+        reply_markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔗 Share Bot", switch_inline_query=" is the best downloader bot!")
+        ]])
 
-        caption = (f"🎬 **{title}**\n\n"
-                   f"📌 **Source:** {uploader}\n"
-                   f"⏱ **Duration:** {format_time(duration)}\n\n"
-                   f"🔥 **Downloaded via Ultimate Bot**")
-
-        await status_msg.edit_text("📤 **Telegram သို့ ပြန်လည် ပေးပို့နေပါသည်...**")
+        await status_msg.edit_text("📤 **Uploading to Telegram...**")
         start_time = time.time()
         
-        if is_audio:
-            await client.send_audio(
-                chat_id=message.chat.id,
-                audio=file_path,
-                caption=caption,
-                title=title,
-                performer=uploader,
-                progress=progress_bar,
-                progress_args=(status_msg, start_time)
-            )
-        else:
-            await client.send_video(
-                chat_id=message.chat.id,
-                video=file_path,
-                caption=caption,
-                thumb=thumb_path,
-                supports_streaming=True,
-                progress=progress_bar,
-                progress_args=(status_msg, start_time)
-            )
+        await client.send_video(
+            chat_id=message.chat.id,
+            video=file_path,
+            caption=caption,
+            supports_streaming=True,
+            reply_markup=reply_markup,
+            progress=progress_bar,
+            progress_args=(status_msg, start_time)
+        )
             
         await status_msg.delete()
         
-        # Cleanup
-        if os.path.exists(file_path): os.remove(file_path)
-        if thumb_path and os.path.exists(thumb_path): os.remove(thumb_path)
+        # Auto Clean-up
+        if os.path.exists(file_path): 
+            os.remove(file_path)
 
     except Exception as e:
-        await status_msg.edit_text(f"❌ **Download မအောင်မြင်ပါ:**\n\n`{str(e)[:400]}`\n\n(Private Account သို့မဟုတ် Server ပိတ်ထားသော Link ဖြစ်နိုင်ပါသည်)")
+        error_text = str(e)
+        if "Unsupported URL" in error_text:
+            err_msg = "❌ This website is not supported."
+        elif "Private video" in error_text or "Video is private" in error_text:
+            err_msg = "❌ This account or video is private. I cannot access it."
+        else:
+            err_msg = f"❌ **Download Failed:**\n\n`{error_text[:200]}`"
+            
+        await status_msg.edit_text(err_msg)
 
 if __name__ == "__main__":
     if not os.path.exists('downloads'):
         os.makedirs('downloads')
-    print("🚀 Ultimate Social Media Downloader is Online!")
+    print("🚀 Ultimate Public Social Downloader is Online!")
     app.run()
